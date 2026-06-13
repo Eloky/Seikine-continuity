@@ -46,9 +46,9 @@ digest = keccak256(abi.encodePacked(
   returned as JSON `{ "data": "0x…" }`.
 
 See [`src/handler.js`](src/handler.js) (`makeDigest` / `handleRequest`). The signer
-address `0xc04F4c30Cae99354BD2B6F5C099D73b94726c7b7` is registered in the resolver's
+address `0x5b9dC9e5F402b2c79A9570457Bbea2d3D8832A21` is registered in the resolver's
 `signers` map, so its signatures verify. Sanity check:
-`cast call 0x71d7882A2d38Df2d5F10d01f703CFB81EDC73EB0 "signers(address)(bool)" 0xc04F4c30Cae99354BD2B6F5C099D73b94726c7b7` → `true`.
+`cast call 0x71d7882A2d38Df2d5F10d01f703CFB81EDC73EB0 "signers(address)(bool)" 0x5b9dC9e5F402b2c79A9570457Bbea2d3D8832A21` → `true`.
 
 ## Environment (`.env` — gitignored, never commit the key)
 
