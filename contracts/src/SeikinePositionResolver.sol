@@ -1,85 +1,97 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.19;
+pragma solidity ^0.8.24;
 
 import {IExtendedResolver} from "ens/IExtendedResolver.sol";
+import {IResolverService} from "ens/IResolverService.sol";
+import {SignatureVerifier} from "ens/SignatureVerifier.sol";
+import {IERC165} from "openzeppelin/IERC165.sol";
 
 /// @title  SeikinePositionResolver
-/// @notice One wildcard CCIP-Read resolver for every `*.seikine.eth` name.
-///         Set once as the resolver of `seikine.eth`, it answers for
+/// @notice One wildcard CCIP-Read (EIP-3668) resolver for every `*.seikine.eth`
+///         name. Set once as the resolver of `seikine.eth`, it answers for
 ///         `alice.seikine.eth`, `lend.alice.seikine.eth`, etc. via ENSIP-10
-///         longest-suffix matching — NOTHING is minted per name. Reads of a
-///         name revert `OffchainLookup` (EIP-3668), the client re-queries the
-///         offchain gateway (`ens-gateway/`), and `resolveWithProof` verifies
-///         the gateway's signature before returning the live position profile.
+///         longest-suffix matching — NOTHING is minted per name. A read reverts
+///         `OffchainLookup`, the client re-queries the offchain gateway
+///         (`ens-gateway/`), and `resolveWithProof` verifies the gateway's
+///         signature before returning the live position record.
 ///
-/// @dev    SKELETON. The interface surface and the EIP-3668 round-trip shape
-///         are final; the wildcard name parse (subject extraction under
-///         seikine.eth) and the full request/response encoding are completed
-///         during the event (separate spec). Only the gateway's PUBLIC
-///         verification address (`signer`) is ever committed here — the
-///         matching private signing key lives solely in the gateway's
-///         gitignored `.env`.
-contract SeikinePositionResolver is IExtendedResolver {
+/// @dev    Canonical `ensdomains/offchain-resolver` (MIT), configured — not
+///         reinvented. It holds NO Seikine accounting: `resolve` hands the whole
+///         DNS-encoded `name` + `data` to the gateway and never parses the
+///         subname on-chain, so this is public-native (no private mirror). The
+///         resolver stores only the gateway's PUBLIC signer address(es); the
+///         matching private signing key lives solely in the gateway's gitignored
+///         `.env`. `url` and `signers` are owner-settable so the resolver can be
+///         deployed before the gateway exists, then pointed at it with no
+///         redeploy.
+contract SeikinePositionResolver is IExtendedResolver, IERC165 {
+    /// @notice Gateway endpoint (EIP-3668 URL). Owner-settable post-deploy.
+    string public url;
+
+    /// @notice Trusted gateway signer(s). The gateway signs CCIP-Read responses
+    ///         with the private key whose address is registered here.
+    mapping(address => bool) public signers;
+
+    /// @notice Admin able to set `url` / `signers` (the deployer by default).
+    address public owner;
+
     /// @notice EIP-3668: instructs a CCIP-Read client to call `urls` off-chain
     ///         and hand the answer back through `callbackFunction`.
     error OffchainLookup(
-        address sender,
-        string[] urls,
-        bytes callData,
-        bytes4 callbackFunction,
-        bytes extraData
+        address sender, string[] urls, bytes callData, bytes4 callbackFunction, bytes extraData
     );
 
-    error InvalidSigner();
-    error SignatureExpired();
     error NotOwner();
 
-    address public owner;
-    /// @notice Gateway endpoint (EIP-3668 URL template).
-    string public url;
-    /// @notice PUBLIC address the gateway signs with. The private key is never
-    ///         in this repo — it lives in `ens-gateway/.env` (gitignored).
-    address public immutable signer;
-
     event UrlSet(string url);
+    event SignerSet(address indexed signer, bool ok);
 
     modifier onlyOwner() {
         if (msg.sender != owner) revert NotOwner();
         _;
     }
 
+    /// @param url_    Gateway endpoint (use a placeholder until the gateway is
+    ///                hosted, then `setUrl`).
+    /// @param signer_ Initial trusted gateway signer (its PUBLIC address). May be
+    ///                `address(0)` to register signers later via `setSigner`.
     constructor(string memory url_, address signer_) {
         owner = msg.sender;
         url = url_;
-        signer = signer_;
+        if (signer_ != address(0)) {
+            signers[signer_] = true;
+            emit SignerSet(signer_, true);
+        }
     }
 
+    // ─── Admin ──────────────────────────────────────────────────────────────
+
+    /// @notice Point the resolver at the gateway once it's hosted (no redeploy).
     function setUrl(string calldata url_) external onlyOwner {
         url = url_;
         emit UrlSet(url_);
     }
 
-    // ─── ENSIP-10 entrypoint ────────────────────────────────────────────────
+    /// @notice Add or remove a trusted gateway signer (key rotation).
+    function setSigner(address signer, bool ok) external onlyOwner {
+        signers[signer] = ok;
+        emit SignerSet(signer, ok);
+    }
+
+    // ─── ENSIP-10 entrypoint ─────────────────────────────────────────────────
 
     /// @notice Wildcard resolution entrypoint. Reverts `OffchainLookup` to send
-    ///         the query to the gateway.
-    /// @param name DNS-wire-encoded ENS name (e.g. `alice.seikine.eth`).
-    /// @param data ABI-encoded resolver call (`addr`, `text`, …).
+    ///         the full query to the gateway.
+    /// @param name DNS-wire-encoded ENS name (e.g. `lend.alice.seikine.eth`).
+    /// @param data ABI-encoded resolver call (`addr`, `text`, …) — passed through
+    ///             untouched; record keys are interpreted by the gateway.
     function resolve(bytes calldata name, bytes calldata data)
         external
         view
         override
         returns (bytes memory)
     {
-        // During the event: parse `name` (longest-suffix under seikine.eth) to
-        // the subject address and select the requested record before building
-        // the gateway request. The EIP-3668 revert below is the final shape.
-        bytes memory callData = abi.encodeWithSelector(
-            ISeikineGateway.resolveProfile.selector,
-            address(this),
-            name,
-            data
-        );
+        bytes memory callData = abi.encodeCall(IResolverService.resolve, (name, data));
         string[] memory urls = new string[](1);
         urls[0] = url;
         revert OffchainLookup(
@@ -87,70 +99,34 @@ contract SeikinePositionResolver is IExtendedResolver {
             urls,
             callData,
             this.resolveWithProof.selector,
-            abi.encode(name, data) // extraData: rebind the request in the callback
+            callData // extraData == the request; re-verified verbatim in the callback
         );
     }
 
-    // ─── EIP-3668 callback ──────────────────────────────────────────────────
+    // ─── EIP-3668 callback ───────────────────────────────────────────────────
 
-    /// @notice Verifies the gateway's signature over its response and returns
-    ///         the resolver result. Reverts if the signature is expired or not
-    ///         from the registered `signer`.
+    /// @notice Verify the gateway's signature over its response and return the
+    ///         resolver result. Reverts if the response is expired (in
+    ///         `SignatureVerifier`) or not signed by a registered signer.
+    /// @param response The gateway's `abi.encode(result, expires, sig)`.
+    /// @param extraData The original request bytes echoed by the client (the
+    ///                  `callData` from `resolve`), bound into the signature.
     function resolveWithProof(bytes calldata response, bytes calldata extraData)
         external
         view
         returns (bytes memory)
     {
-        (bytes memory result, uint64 expires, bytes memory sig) =
-            abi.decode(response, (bytes, uint64, bytes));
-        if (expires < block.timestamp) revert SignatureExpired();
-        bytes32 hash = makeSignatureHash(address(this), expires, extraData, result);
-        if (_recover(hash, sig) != signer) revert InvalidSigner();
+        (address signer, bytes memory result) = SignatureVerifier.verify(extraData, response);
+        require(signers[signer], "SeikinePositionResolver: invalid signer");
         return result;
     }
 
-    /// @notice Hash the gateway signs over — binds resolver, expiry, the exact
-    ///         request, and the result (mirrors ENS `SignatureVerifier`).
-    function makeSignatureHash(
-        address target,
-        uint64 expires,
-        bytes memory request,
-        bytes memory result
-    ) public pure returns (bytes32) {
-        return keccak256(
-            abi.encodePacked(hex"1900", target, expires, keccak256(request), keccak256(result))
-        );
+    // ─── ERC-165 ─────────────────────────────────────────────────────────────
+
+    /// @dev `IExtendedResolver.interfaceId` (0x9061b923) is mandatory — the v2
+    ///      UniversalResolver checks it to route wildcard/offchain resolution.
+    function supportsInterface(bytes4 interfaceId) external pure override returns (bool) {
+        return interfaceId == type(IExtendedResolver).interfaceId // 0x9061b923 (ENSIP-10)
+            || interfaceId == type(IERC165).interfaceId; // 0x01ffc9a7 (ERC-165)
     }
-
-    function supportsInterface(bytes4 interfaceId) external pure returns (bool) {
-        return interfaceId == type(IExtendedResolver).interfaceId // ENSIP-10
-            || interfaceId == 0x01ffc9a7; // ERC-165
-    }
-
-    // ─── Internal ─────────────────────────────────────────────────────────
-
-    /// @dev Recover the signer of a 65-byte ECDSA signature.
-    function _recover(bytes32 hash, bytes memory sig) internal pure returns (address) {
-        if (sig.length != 65) return address(0);
-        bytes32 r;
-        bytes32 s;
-        uint8 v;
-        assembly {
-            r := mload(add(sig, 0x20))
-            s := mload(add(sig, 0x40))
-            v := byte(0, mload(add(sig, 0x60)))
-        }
-        return ecrecover(hash, v, r, s);
-    }
-}
-
-/// @notice Off-chain gateway request shape consumed by `ens-gateway/`. The
-///         gateway reads live state through `ISeikineLens` over RPC, signs the
-///         response with the key in its `.env`, and returns `(result, expires,
-///         sig)` ABI-encoded.
-interface ISeikineGateway {
-    function resolveProfile(address sender, bytes calldata name, bytes calldata data)
-        external
-        view
-        returns (bytes memory result, uint64 expires, bytes memory sig);
 }
