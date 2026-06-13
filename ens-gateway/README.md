@@ -98,28 +98,67 @@ a valid signed response** — the safety breaker shows up in the ENS record inst
 of breaking the demo. (`src/controller.js` `safeRead`.) Refresh the feed before
 demoing to widen the margin.
 
-## Host + wire + verify (Elian)
+## How it's wired (and how to verify it)
+
+The gateway is **deployed and live** at
+`https://seikine-continuity-production.up.railway.app`. The `SeikinePositionResolver`
+on `seikine.eth` already points at it, and the name is wired to the resolver — there
+is nothing to stand up. Here's the wiring and how to check each link yourself. Any
+Sepolia RPC works for `--rpc-url`; the public `https://rpc.sepolia.org` is fine.
+
+1. **The resolver points at the hosted gateway.** Its `url` was set (`setUrl`) to the
+   Railway URL, so the resolver's `OffchainLookup` sends clients there:
+   ```bash
+   cast call 0x71d7882A2d38Df2d5F10d01f703CFB81EDC73EB0 "url()(string)" --rpc-url https://rpc.sepolia.org
+   # → https://seikine-continuity-production.up.railway.app/
+   ```
+2. **The name is wired to the resolver.** `seikine.eth` was set to this resolver on
+   the ENS v2 registry `0xDEDB92913A25abE1f7BCDD85D8A344a43B398B67` via
+   `setResolver(tokenId, resolver)`, token ID
+   `73813321819503697881936177697534762413441876033113719862144698342846247206912`.
+3. **The gateway's signer is registered.** The resolver verifies every response
+   against this public address:
+   ```bash
+   cast call 0x71d7882A2d38Df2d5F10d01f703CFB81EDC73EB0 "signers(address)(bool)" 0x5b9dC9e5F402b2c79A9570457Bbea2d3D8832A21 --rpc-url https://rpc.sepolia.org
+   # → true
+   ```
+4. **Resolve a name end-to-end — the whole chain proving out.** `resolve-test.mjs`
+   calls the resolver directly and follows the EIP-3668 `OffchainLookup` to the hosted
+   gateway via viem, verifying the signed response (reads `RPC_URL` from `.env`, no
+   secrets):
+   ```bash
+   # in ens-gateway/
+   node --env-file=.env resolve-test.mjs
+   # → borrow.alice debtUSD       = $6.48
+   # → lend.alice   collateralUSD = $90.59
+   ```
+   resolver `OffchainLookup` → hosted gateway → live controller read → signed response
+   → resolver verifies → value. Nothing is minted per name (virtual subnames via
+   ENSIP-10 wildcard). The `ens` CLI can also resolve these names if pointed at the v2
+   registry, but this viem script is the verified, dependency-free path.
+
+If a USD field comes back `unavailable (price feed stale)`, the safety breaker tripped
+on a lagging testnet feed (see **Graceful degradation** above) — refresh the feed and
+re-run; the name still resolves either way.
+
+### Run your own instance
+
+You don't need to — the deployment above is live — but to redeploy from scratch:
 
 1. **Host** the Express app on a public HTTPS URL with a Node runtime — Railway or
    Render (free tier) deploy straight from `ens-gateway/`. Set `GATEWAY_SIGNER_PK`,
-   `RPC_URL`, `RESOLVER_ADDRESS`, `CONTROLLER_ADDRESS` as the host's secret env vars
-   — **the signer key as a secret, never in the repo.**
-2. **Point the resolver at it** (you're the owner; no redeploy — `url` is settable):
+   `RPC_URL`, `RESOLVER_ADDRESS`, `CONTROLLER_ADDRESS` as the host's **secret** env
+   vars — **the signer key as a secret, never in the repo.**
+2. **Point the resolver at your host** (the resolver owner can reset `url`; no
+   redeploy):
    ```bash
-   cast send 0x71d7882A2d38Df2d5F10d01f703CFB81EDC73EB0 "setUrl(string)" "https://<your-gateway-host>/" --rpc-url <sepolia> --private-key $PK
+   cast send 0x71d7882A2d38Df2d5F10d01f703CFB81EDC73EB0 "setUrl(string)" "https://your-host.example/" --rpc-url https://rpc.sepolia.org --private-key $PK
    ```
 3. **Wire the name to the resolver** (v2 `setResolver` by token ID):
    ```bash
-   cast send 0xDEDB92913A25abE1f7BCDD85D8A344a43B398B67 "setResolver(uint256,address)" 73813321819503697881936177697534762413441876033113719862144698342846247206912 0x71d7882A2d38Df2d5F10d01f703CFB81EDC73EB0 --rpc-url <sepolia> --private-key $PK
+   cast send 0xDEDB92913A25abE1f7BCDD85D8A344a43B398B67 "setResolver(uint256,address)" 73813321819503697881936177697534762413441876033113719862144698342846247206912 0x71d7882A2d38Df2d5F10d01f703CFB81EDC73EB0 --rpc-url https://rpc.sepolia.org --private-key $PK
    ```
-4. **The live resolve — the whole chain proving out:**
-   ```bash
-   ens get text borrow.alice.seikine.eth --key seikine:debtUSD       # → "$6.48"
-   ens get text lend.alice.seikine.eth   --key seikine:collateralUSD # → "$90.59"
-   ```
-   UniversalResolver → resolver `OffchainLookup` → this gateway → live controller
-   read → signed response → resolver verifies → value. Nothing is minted per name
-   (virtual subnames via ENSIP-10 wildcard).
+4. Re-run the verification above against your URL.
 
 ## Live registration (tier-2)
 
@@ -129,7 +168,7 @@ resolves that wallet's position through the unchanged signing path. Nothing is
 minted on-chain.
 
 ```bash
-curl -X POST https://<gateway-host>/register \
+curl -X POST https://seikine-continuity-production.up.railway.app/register \
   -H "Content-Type: application/json" -d '{"name":"bob","address":"0x…"}'
 # → { ok: true, names: ["bob.seikine.eth", "lend.bob.seikine.eth", "borrow.bob.seikine.eth"] }
 ```
