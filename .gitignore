@@ -1,0 +1,17 @@
+# --- private contract implementations (local-only; needed to deploy the full system) ---
+contracts/src/private/
+# --- deploy scripts (carry addresses / private wiring) ---
+contracts/script/
+# --- secrets (including the ENS gateway signing key) ---
+.env
+.env.*
+*.key
+*.pem
+# --- foundry build artifacts (broadcast can contain addresses/keys) ---
+out/
+cache/
+broadcast/
+# --- node (contracts tooling + ens-gateway + ens-demo) ---
+node_modules/
+# --- belt-and-suspenders: never track the private frontend even if it's ever copied in ---
+seikine-app/

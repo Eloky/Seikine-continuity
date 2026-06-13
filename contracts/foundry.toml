@@ -1,0 +1,14 @@
+[profile.default]
+src = "src"
+out = "out"
+test = "test"
+script = "script"
+libs = ["lib"]
+optimizer = true
+optimizer_runs = 200
+# Remappings are read from remappings.txt. solc is auto-detected from the
+# ^0.8.19 pragma so the public set builds without pinning a downloaded compiler.
+
+[fmt]
+line_length = 100
+tab_width = 4

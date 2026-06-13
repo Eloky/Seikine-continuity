@@ -1,0 +1,13 @@
+{
+  "name": "seikine-ens-demo",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Register seikine.eth and resolve *.seikine.eth virtual position names through the wildcard CCIP-Read resolver. References public addresses only.",
+  "scripts": {
+    "resolve": "node src/resolve.js"
+  },
+  "dependencies": {
+    "viem": "^2.21.0"
+  }
+}

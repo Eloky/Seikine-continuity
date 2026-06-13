@@ -1,0 +1,15 @@
+{
+  "name": "seikine-ens-gateway",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "EIP-3668 CCIP-Read gateway for *.seikine.eth. Reads live Seikine positions over RPC via ISeikineLens and returns signed resolver responses that SeikinePositionResolver verifies on-chain.",
+  "scripts": {
+    "dev": "node --watch src/index.js",
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "@chainlink/ccip-read-server": "^0.2.1",
+    "viem": "^2.21.0"
+  }
+}
