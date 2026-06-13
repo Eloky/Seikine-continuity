@@ -42,6 +42,7 @@ test('POST / returns a signed EIP-3668 body decoding to the value', async () => 
       body: JSON.stringify({ sender: RESOLVER, data: callData('borrow.alice.seikine.eth', 'seikine:debtUSD') }),
     })
     assert.equal(res.status, 200)
+    assert.equal(res.headers.get('access-control-allow-origin'), '*', 'CORS so a browser can read the CCIP response')
     const json = await res.json()
     assert.ok(typeof json.data === 'string' && json.data.startsWith('0x'))
     const [result] = decodeAbiParameters(
@@ -49,6 +50,23 @@ test('POST / returns a signed EIP-3668 body decoding to the value', async () => 
     )
     const [value] = decodeAbiParameters([{ type: 'string' }], result)
     assert.equal(value, '$6.48')
+  } finally {
+    server.close()
+  }
+})
+
+test('OPTIONS / preflight -> 204 with CORS headers (browser CCIP-Read)', async () => {
+  const server = appWithMocks().listen(0)
+  try {
+    const { port } = server.address()
+    const res = await fetch(`http://127.0.0.1:${port}/`, {
+      method: 'OPTIONS',
+      headers: { Origin: 'https://frontend.example', 'Access-Control-Request-Method': 'POST' },
+    })
+    assert.equal(res.status, 204)
+    assert.equal(res.headers.get('access-control-allow-origin'), '*')
+    assert.match(res.headers.get('access-control-allow-methods') || '', /POST/)
+    assert.match(res.headers.get('access-control-allow-headers') || '', /Content-Type/i)
   } finally {
     server.close()
   }
