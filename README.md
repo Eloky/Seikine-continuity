@@ -15,7 +15,7 @@ Seikine plus two new features built for the hackathon (June 12–14, 2026):
 
 | Status | Piece | Where |
 | ------ | ----- | ----- |
-| **Reused · private** | Seikine core: treasury, vaults, routers, liquidation, lens impl | `contracts/src/private/` (gitignored) + reached via interfaces |
+| **Reused · private** | Seikine core: treasury, vaults, routers, liquidation, lens impl | `Seikine_eth_v1` (gitignored) + reached via interfaces |
 | **Reused · pre-event** | Lending controller baseline; Dynamic wallet integration | controller below; wallet lives in the private `seikine-app` |
 | **NEW (Jun 12–14)** | Chainlink circuit breaker | `contracts/src/SeikineLendingController.sol` + `test/CircuitBreaker.t.sol` |
 | **NEW (Jun 12–14)** | ENS wildcard position resolver | `contracts/src/SeikinePositionResolver.sol` + `test/PositionResolver.t.sol` |
@@ -61,7 +61,7 @@ set is self-contained.
 
 ## Leak-safety
 
-- Private contract implementations live in `contracts/src/private/` and deploy
+- Private contract implementations live in `Seikine_eth_v1` and deploy
   scripts in `contracts/script/` — both **gitignored**.
 - The private frontend (`seikine-app`) is a separate sibling folder, **not in
   this repo**.
