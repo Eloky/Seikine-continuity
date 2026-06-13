@@ -5,6 +5,8 @@ contracts/script/
 # --- secrets (including the ENS gateway signing key) ---
 .env
 .env.*
+# ...but the non-secret env template (placeholder values only) IS tracked.
+!.env.example
 *.key
 *.pem
 # --- foundry build artifacts (broadcast can contain addresses/keys) ---

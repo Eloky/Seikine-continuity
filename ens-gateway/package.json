@@ -3,13 +3,17 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "EIP-3668 CCIP-Read gateway for *.seikine.eth. Reads live Seikine positions over RPC via ISeikineLens and returns signed resolver responses that SeikinePositionResolver verifies on-chain.",
+  "description": "EIP-3668 CCIP-Read gateway for *.seikine.eth. Reads live Seikine positions over RPC from SeikineLendingController and returns signed resolver responses that SeikinePositionResolver verifies on-chain.",
+  "engines": {
+    "node": ">=20.6"
+  },
   "scripts": {
+    "start": "node src/index.js",
     "dev": "node --watch src/index.js",
-    "start": "node src/index.js"
+    "test": "node --test"
   },
   "dependencies": {
-    "@chainlink/ccip-read-server": "^0.2.1",
+    "express": "^4.21.2",
     "viem": "^2.21.0"
   }
 }
