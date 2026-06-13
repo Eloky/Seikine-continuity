@@ -21,7 +21,7 @@ Seikine plus two new features built for the hackathon (June 12–14, 2026):
 | **NEW (Jun 12–14)** | ENS wildcard position resolver | `contracts/src/SeikinePositionResolver.sol` + `test/PositionResolver.t.sol` |
 | **NEW (Jun 12–14)** | ENS live-profile CCIP-Read gateway | `ens-gateway/` |
 | **NEW (Jun 12–14)** | ENS registration + resolution demo | `ens-demo/` |
-| **Roadmap** | Tokenized position-NFTs (ERC-1155 via v2 registry factory); ZK shielded positions (Groth16) | not built here |
+| **Roadmap** | Tokenized position-NFTs (ERC-1155 via v2 registry factory); ZK shielded positions (Groth16) | not built here, will be added later |
 
 ## Layout
 
