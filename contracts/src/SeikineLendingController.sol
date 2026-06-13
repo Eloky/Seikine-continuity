@@ -2,6 +2,7 @@
 pragma solidity ^0.8.19;
 
 import {AggregatorV3Interface} from "chainlink/AggregatorV3Interface.sol";
+import {ChainlinkGuard} from "./libraries/ChainlinkGuard.sol";
 import {ISeikineTreasury} from "./interfaces/ISeikineTreasury.sol";
 import {ISeikineCollateralVault} from "./interfaces/ISeikineCollateralVault.sol";
 
@@ -46,6 +47,19 @@ contract SeikineLendingController {
         uint256 lastAccrualTimestamp;
     }
 
+    /// @notice Per-feed fail-closed parameters consumed by `ChainlinkGuard` on
+    ///         every price read. Keyed by the Chainlink aggregator address — a
+    ///         property of the *feed*, not the asset, so two vaults sharing one
+    ///         ETH/USD feed share one band. A feed with no entry
+    ///         (`maxStaleness == 0`) falls back to the legacy global default via
+    ///         `_guardParamsFor`, so behaviour matches the pre-breaker contract
+    ///         until an admin tunes it with `setFeedGuardParams`.
+    struct FeedGuardParams {
+        uint64 maxStaleness; // seconds; 0 = unconfigured -> fall back to default
+        int256 minAnswer; // inclusive floor, raw feed decimals
+        int256 maxAnswer; // inclusive ceiling, raw feed decimals
+    }
+
     // ─── Constants ──────────────────────────────────────────────────────────
 
     uint256 internal constant BPS = 10_000; // 10000 bps = 100%
@@ -65,6 +79,10 @@ contract SeikineLendingController {
     mapping(address => CollateralVaultConfig) public collateralVaultConfig;
     mapping(address => DebtAssetConfig) public debtAssetConfig;
 
+    /// @notice Per-feed circuit-breaker bounds. Empty until `setFeedGuardParams`;
+    ///         unconfigured feeds use the `_guardParamsFor` legacy fallback.
+    mapping(address feed => FeedGuardParams) public feedGuardParams;
+
     // Registries so the aggregate USD views can enumerate active markets.
     address[] public collateralVaults;
     address[] public debtAssets;
@@ -81,16 +99,28 @@ contract SeikineLendingController {
     event CollateralVaultConfigured(address indexed vault, bool supported);
     event DebtAssetConfigured(address indexed asset, bool supported);
     event PausedSet(bool paused);
+    event FeedGuardParamsSet(address indexed feed, uint64 maxStaleness, int256 minAnswer, int256 maxAnswer);
 
     // ─── Errors ───────────────────────────────────────────────────────────
 
-    /// @dev selector 0x216cc5f5 — the breaker's fail-closed signal, surfaced by
-    ///      the frontend (useUserPosition) to fall back to a client projection.
-    error PriceFeedStale();
+    /// @dev The fail-closed price errors now live in `ChainlinkGuard` and are
+    ///      shared byte-for-byte with the production controller:
+    ///      `PriceFeedStale()` — selector 0x216cc5f5, the breaker signal the
+    ///      frontend's useUserPosition keys on to fall back to a client
+    ///      projection; the selector is signature-derived, so relocating the
+    ///      error into the guard preserves it — plus `BadPrice()`,
+    ///      `PriceOutOfBounds()`, and `RoundNotComplete()`. The non-positive
+    ///      answer that this contract previously surfaced as `PriceFeedStale()`
+    ///      now surfaces as the guard's `BadPrice()`.
     error NotOwner();
     error IsPaused();
     error Unsupported();
     error InsufficientCollateral();
+    /// @dev `setFeedGuardParams` rejects a zero feed address.
+    error ZeroAddress();
+    /// @dev `setFeedGuardParams` rejects non-sane bounds: zero staleness,
+    ///      negative floor, or ceiling <= floor.
+    error InvalidGuardParams();
 
     // ─── Modifiers ──────────────────────────────────────────────────────────
 
@@ -137,8 +167,9 @@ contract SeikineLendingController {
         if (!debtAssetConfig[asset].supported) revert Unsupported();
         _debtPrincipal[msg.sender][asset] += amount;
         // Health check after accrual. Reverts (unwinding the borrow) if it
-        // breaches borrow capacity, or PriceFeedStale() via _readPrice if any
-        // required oracle is stale — the breaker fails the borrow closed.
+        // breaches borrow capacity, or fails closed via the ChainlinkGuard in
+        // _readPrice if any required oracle is stale / non-positive / out of
+        // bounds — the breaker sits on this state-changing path.
         if (userTotalDebtUSD(msg.sender) > userMaxBorrowUSD(msg.sender)) {
             revert InsufficientCollateral();
         }
@@ -237,6 +268,29 @@ contract SeikineLendingController {
         maxFeedStaleness = seconds_;
     }
 
+    /// @notice Set the `ChainlinkGuard` fail-closed params for a price feed,
+    ///         keyed by aggregator address. Until set, reads use the legacy
+    ///         default (`maxFeedStaleness`, no bounds) via `_guardParamsFor`.
+    /// @dev    For the Sepolia demo, point WETH collateral at the real ETH/USD
+    ///         aggregator and keep `maxStaleness` loose (~3-6h) so the live
+    ///         testnet feed never false-trips mid-demo, e.g.
+    ///         `setFeedGuardParams(0x694AA176..., 6 hours, 100e8, 100_000e8)`.
+    /// @param feed         Chainlink aggregator address. Must be non-zero.
+    /// @param maxStaleness Max answer age (s) before reads revert `PriceFeedStale`. Must be > 0.
+    /// @param minAnswer    Inclusive floor (raw feed decimals). Must be >= 0.
+    /// @param maxAnswer    Inclusive ceiling (raw feed decimals). Must be > minAnswer.
+    function setFeedGuardParams(address feed, uint64 maxStaleness, int256 minAnswer, int256 maxAnswer)
+        external
+        onlyOwner
+    {
+        if (feed == address(0)) revert ZeroAddress();
+        if (maxStaleness == 0) revert InvalidGuardParams();
+        if (minAnswer < 0) revert InvalidGuardParams();
+        if (maxAnswer <= minAnswer) revert InvalidGuardParams();
+        feedGuardParams[feed] = FeedGuardParams(maxStaleness, minAnswer, maxAnswer);
+        emit FeedGuardParamsSet(feed, maxStaleness, minAnswer, maxAnswer);
+    }
+
     function setTreasury(address treasury_) external onlyOwner {
         treasury = ISeikineTreasury(treasury_);
     }
@@ -251,15 +305,36 @@ contract SeikineLendingController {
 
     // ─── Internal: pricing + the circuit-breaker seam ───────────────────────
 
-    /// @dev THE BREAKER SEAM. Reads a Chainlink feed and fails closed on a
-    ///      stale or non-positive answer. The hackathon breaker extends the
-    ///      guard set here (deviation bounds, min/max price, per-feed windows);
-    ///      every addition reverts `PriceFeedStale()` so callers degrade safely.
+    /// @dev THE BREAKER SEAM. Every USD view prices through here, so routing it
+    ///      through `ChainlinkGuard.readSafe` makes the whole borrow /
+    ///      liquidation path fail closed: a non-positive (`BadPrice`),
+    ///      out-of-bounds (`PriceOutOfBounds`), incomplete-round
+    ///      (`RoundNotComplete`), or stale (`PriceFeedStale`) answer reverts
+    ///      instead of pricing collateral/debt off bad data. Per-feed bounds and
+    ///      the staleness window come from `_guardParamsFor`. The guard is the
+    ///      byte-identical production guard; baseline decimal scaling stays here.
     function _readPrice(address feed, uint8 feedDecimals) internal view returns (uint256) {
-        (, int256 answer,, uint256 updatedAt,) = AggregatorV3Interface(feed).latestRoundData();
-        if (answer <= 0) revert PriceFeedStale();
-        if (block.timestamp - updatedAt > maxFeedStaleness) revert PriceFeedStale();
-        return _scaleTo18(uint256(answer), feedDecimals);
+        (uint256 maxStaleness, int256 minAnswer, int256 maxAnswer) = _guardParamsFor(feed);
+        (uint256 price,) =
+            ChainlinkGuard.readSafe(AggregatorV3Interface(feed), maxStaleness, minAnswer, maxAnswer);
+        return _scaleTo18(price, feedDecimals);
+    }
+
+    /// @notice Resolve the `ChainlinkGuard` params for `feed`. Feeds with no
+    ///         `setFeedGuardParams` entry (`maxStaleness == 0`) fall back to the
+    ///         legacy global default — `maxFeedStaleness`, no min/max bounds — so
+    ///         price-read behaviour matches the pre-breaker contract until an
+    ///         admin tunes the feed.
+    function _guardParamsFor(address feed)
+        internal
+        view
+        returns (uint256 maxStaleness, int256 minAnswer, int256 maxAnswer)
+    {
+        FeedGuardParams memory g = feedGuardParams[feed];
+        if (g.maxStaleness == 0) {
+            return (maxFeedStaleness, int256(0), type(int256).max);
+        }
+        return (uint256(g.maxStaleness), g.minAnswer, g.maxAnswer);
     }
 
     function _collateralUSD(address user, address vault) internal view returns (uint256) {

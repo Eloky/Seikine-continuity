@@ -11,6 +11,8 @@ contracts/script/
 out/
 cache/
 broadcast/
+# --- foundry test dependencies (forge-std); installed locally, not vendored ---
+contracts/lib/
 # --- node (contracts tooling + ens-gateway + ens-demo) ---
 node_modules/
 # --- belt-and-suspenders: never track the private frontend even if it's ever copied in ---

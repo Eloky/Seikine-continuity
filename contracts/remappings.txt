@@ -1,2 +1,4 @@
 chainlink/=src/vendor/chainlink/
 ens/=src/vendor/ens/
+@chainlink/contracts/src/v0.8/shared/interfaces/=src/vendor/chainlink/
+forge-std/=lib/forge-std/src/
