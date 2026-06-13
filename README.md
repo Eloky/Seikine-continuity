@@ -23,6 +23,12 @@ Seikine plus two new features built for the hackathon (June 12–14, 2026):
 | **NEW (Jun 12–14)** | ENS registration + resolution demo | `ens-demo/` |
 | **Roadmap** | Tokenized position-NFTs (ERC-1155 via v2 registry factory); ZK shielded positions (Groth16) | not built here, will be added later |
 
+> **On the public controller:** `SeikineLendingController.sol` is a reference
+> skeleton matching the deployed contract's external ABI. Its per-asset
+> accounting is baseline placeholder — not Seikine's production logic — and it
+> is not the bytecode running on Sepolia. The production controller and core
+> are private.
+
 ## Layout
 
 ```
