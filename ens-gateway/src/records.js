@@ -31,7 +31,13 @@ export const fmtHealth = (raw) =>
   raw === MAX_UINT256 ? 'No active debt' : (Number(raw) / 1e4).toFixed(2) + 'x' // bps -> "11.19x"
 export const fmtLTV = (debtRaw, collRaw) =>
   collRaw === 0n ? '0.00%' : ((Number(debtRaw) / Number(collRaw)) * 100).toFixed(2) + '%'
-export const fmtAddrs = (addrs) => (addrs && addrs.length ? addrs.join(', ') : '')
+/** Resolve each token/vault address to its display symbol (USDC, saWETH-L, …),
+ *  falling back to the address when `symbol()` is unavailable. */
+export async function fmtTokens(addrs, symbolOf) {
+  if (!addrs || addrs.length === 0) return ''
+  const syms = await Promise.all(addrs.map((a) => symbolOf(a)))
+  return syms.join(', ')
+}
 
 /**
  * Resolve one text() key to its formatted string value.
@@ -52,9 +58,9 @@ export async function resolveKey(key, action, user, reads) {
         return fmtLTV(debt, coll)
       }
       case 'seikine:collateralAssets':
-        return fmtAddrs(await reads.collateralVaults(user))
+        return fmtTokens(await reads.collateralVaults(user), reads.symbol)
       case 'seikine:debtToken':
-        return fmtAddrs(await reads.debtAssets(user))
+        return fmtTokens(await reads.debtAssets(user), reads.symbol)
       default:
         return ''
     }

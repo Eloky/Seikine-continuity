@@ -4,8 +4,20 @@
 
 import express from 'express'
 import { handleRequest } from './handler.js'
+import { registerName } from './names.js'
+import { CLAIM_FORM_HTML } from './form.js'
+
+// Permissive CORS for the browser claim form (scoped to the tier-2 routes only,
+// so the proven CCIP handler is left untouched).
+const cors = (_req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*')
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
+  next()
+}
 
 export function createApp(deps) {
+  const register = deps.register ?? registerName
   const app = express()
   app.use(express.json({ limit: '1mb' }))
 
@@ -25,5 +37,15 @@ export function createApp(deps) {
   app.post('/', handle)
   app.get('/:sender/:data', handle)
   app.get('/health', (_req, res) => res.json({ ok: true }))
+
+  // ── Tier-2: live registration + self-served claim form (additive) ──────────
+  app.get('/', cors, (_req, res) => res.type('html').send(CLAIM_FORM_HTML))
+  app.options('/register', cors, (_req, res) => res.sendStatus(204))
+  app.post('/register', cors, (req, res) => {
+    const { name, address } = req.body || {}
+    const r = register(name, address)
+    res.status(r.ok ? 200 : 400).json(r)
+  })
+
   return app
 }

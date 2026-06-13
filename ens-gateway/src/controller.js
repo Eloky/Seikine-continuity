@@ -47,6 +47,31 @@ export async function safeRead(fn) {
   }
 }
 
+// ── token symbols (USDC, not 0x3DfC…) — layered: known map -> cache -> live ──
+const KNOWN = {
+  '0x3dfc8b53dafa5ebbb071a8b97678ab534ed838d9': 'USDC', // demo debt token (lowercased)
+}
+const symCache = new Map()
+const symbolAbi = [
+  { name: 'symbol', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ type: 'string' }] },
+]
+
+/** Resolve a token/vault address to its `symbol()`. Instant for known tokens,
+ *  cached for live lookups, and falls back to the address on any revert — so a
+ *  missing symbol never breaks the resolve. */
+export async function tokenSymbol(client, address) {
+  const k = address.toLowerCase()
+  if (KNOWN[k]) return KNOWN[k]
+  if (symCache.has(k)) return symCache.get(k)
+  try {
+    const sym = await client.readContract({ address, abi: symbolAbi, functionName: 'symbol' })
+    symCache.set(k, sym)
+    return sym
+  } catch {
+    return address // graceful fallback
+  }
+}
+
 /** Build the reader the records layer consumes. Price reads are degradation-wrapped. */
 export function makeReads(client, controllerAddress) {
   const read = (functionName, args) =>
@@ -58,6 +83,8 @@ export function makeReads(client, controllerAddress) {
     // Array reads don't touch prices -> no staleness revert, no wrapper needed.
     collateralVaults: (u) => read('userCollateralVaults', [u]),
     debtAssets: (u) => read('userDebtAssets', [u]),
+    // Token/vault display symbol (falls back to the address).
+    symbol: (address) => tokenSymbol(client, address),
   }
 }
 

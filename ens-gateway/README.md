@@ -61,6 +61,7 @@ Copy [`.env.example`](.env.example) to `.env` and fill:
 | `RESOLVER_ADDRESS`   | Deployed `SeikinePositionResolver` (bound into the signature hash). |
 | `CONTROLLER_ADDRESS` | Deployed `SeikineLendingController` (the live position source).     |
 | `PORT`               | HTTP port (default `8080`).                                         |
+| `DATA_DIR`           | _Optional._ Dir for the live-registration store (default `./data`; set to a mounted volume for persistence). |
 
 ## Run
 
@@ -84,6 +85,8 @@ Each subname is a distinct profile; keys outside an action's set return `""`.
 Health factor and LTV live on **borrow** (properties of the debt); LTV is derived
 `debtUSD / collateralUSD` (no getter). Formatting: USD `formatUnits(raw,18)` → `"$90.59"`;
 health `raw/1e4` → `"11.19x"` (or `"No active debt"` at `type(uint256).max`); LTV → `"7.15%"`.
+`debtToken` / `collateralAssets` resolve each address to its `symbol()` (e.g. `"USDC"`),
+cached, with the address as a graceful fallback.
 
 ### Graceful degradation (the breaker, visible through ENS)
 
@@ -118,10 +121,22 @@ demoing to widen the margin.
    read → signed response → resolver verifies → value. Nothing is minted per name
    (virtual subnames via ENSIP-10 wildcard).
 
-## Tier-2 (flagged enhancement — additive, don't block tier-1)
+## Live registration (tier-2)
 
-The label→address map is isolated in [`src/names.js`](src/names.js)
-(`getAddressForLabel`). Tier 2 is a drop-in: add `POST /register { name, address }`
-backed by a small persistent JSON map and have `getAddressForLabel` read it, so a
-judge can claim `bob.seikine.eth → their wallet` live and watch
-`borrow.bob.seikine.eth` resolve their position. No other change required.
+Anyone can claim a name live — open the gateway URL for the self-served form
+(`GET /`), enter a `name` + `address`, and `borrow.<name>.seikine.eth` immediately
+resolves that wallet's position through the unchanged signing path. Nothing is
+minted on-chain.
+
+```bash
+curl -X POST https://<gateway-host>/register \
+  -H "Content-Type: application/json" -d '{"name":"bob","address":"0x…"}'
+# → { ok: true, names: ["bob.seikine.eth", "lend.bob.seikine.eth", "borrow.bob.seikine.eth"] }
+```
+
+- **Store** ([`src/names.js`](src/names.js)): seed-then-registrations, so `alice`
+  (the demo position) can't be hijacked; `lend`/`borrow`/`seikine`/`eth` are reserved;
+  first-come-first-served; checksummed addresses; write-through to `DATA_DIR/names.json`.
+- **Persistence across redeploys:** mount a volume and set `DATA_DIR=/data`. Without
+  it, registrations live until the next restart — fine for a contained booth session.
+- The label→address lookup is the only change; the CCIP signing/resolve path is identical.
