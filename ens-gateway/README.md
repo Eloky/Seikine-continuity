@@ -176,6 +176,4 @@ curl -X POST https://seikine-continuity-production.up.railway.app/register \
 - **Store** ([`src/names.js`](src/names.js)): seed-then-registrations, so `alice`
   (the demo position) can't be hijacked; `lend`/`borrow`/`seikine`/`eth` are reserved;
   first-come-first-served; checksummed addresses; write-through to `DATA_DIR/names.json`.
-- **Persistence across redeploys:** mount a volume and set `DATA_DIR=/data`. Without
-  it, registrations live until the next restart — fine for a contained booth session.
 - The label→address lookup is the only change; the CCIP signing/resolve path is identical.
