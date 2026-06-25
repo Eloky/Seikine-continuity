@@ -121,8 +121,8 @@ test('GET / serves the claim form (replaces "Cannot GET /")', async () => {
     assert.equal(res.status, 200)
     assert.match(res.headers.get('content-type') || '', /html/)
     const body = await res.text()
-    assert.match(body, /Claim a/)
-    assert.match(body, /\/register/)
+    assert.match(body, /Claim your/)
+    assert.match(body, /\/claim/) // form now posts to the in-app claim endpoint
   } finally {
     server.close()
   }

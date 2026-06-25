@@ -12,6 +12,7 @@ import { createApp } from './app.js'
 import { makeClient, makeReads } from './controller.js'
 import { makeSigner } from './sign.js'
 import { getAddressForLabel } from './names.js'
+import { getClaimByHandle } from './claims.js'
 
 // Load .env when running locally; hosted deploys inject these as real env vars.
 try {
@@ -36,7 +37,13 @@ const client = makeClient(RPC_URL)
 const reads = makeReads(client, CONTROLLER_ADDRESS)
 const { signDigest, address } = makeSigner(GATEWAY_SIGNER_PK)
 
-const app = createApp({ resolverAddress: RESOLVER_ADDRESS, signDigest, reads, getAddressForLabel })
+const app = createApp({
+  resolverAddress: RESOLVER_ADDRESS,
+  signDigest,
+  reads,
+  getAddressForLabel,
+  getClaimByHandle,
+})
 
 app.listen(Number(PORT), () => {
   console.log(

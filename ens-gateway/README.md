@@ -88,6 +88,10 @@ health `raw/1e4` → `"11.19x"` (or `"No active debt"` at `type(uint256).max`); 
 `debtToken` / `collateralAssets` resolve each address to its `symbol()` (e.g. `"USDC"`),
 cached, with the address as a graceful fallback.
 
+Beyond these position keys, a **claimed** name also serves `addr(60)` (→ the claimant's
+address, so `handle.seikine.eth` resolves in any wallet) and `text("name")` (→ the
+display name). See [**Claim a name**](#claim-a-name-in-app-flow) below.
+
 ### Graceful degradation (the breaker, visible through ENS)
 
 The controller's price-touching reads revert `PriceFeedStale()` (selector
@@ -160,20 +164,64 @@ You don't need to — the deployment above is live — but to redeploy from scra
    ```
 4. Re-run the verification above against your URL.
 
-## Live registration (tier-2)
+## Claim a name (in-app flow)
 
-Anyone can claim a name live — open the gateway URL for the self-served form
-(`GET /`), enter a `name` + `address`, and `borrow.<name>.seikine.eth` immediately
-resolves that wallet's position through the unchanged signing path. Nothing is
-minted on-chain.
+Claiming a name is a **database write, not a transaction** — the only on-chain
+interaction is resolution, which the resolver + signing path already handle. Two
+strictly-separate fields (the Discord display-name + discriminator split):
+
+| Field            | Purpose                            | Unique?            | Resolvable?                       | Mutable?               |
+| ---------------- | ---------------------------------- | ------------------ | --------------------------------- | ---------------------- |
+| **display name** | cosmetic label shown in the UI     | no — collisions ok | no — only a `text("name")` output | yes                    |
+| **handle**       | the subname resolution keys on     | **yes**            | yes — `handle.seikine.eth` → addr | **no — frozen at claim** |
+
+First claimant of a base gets the clean handle; everyone after gets an
+address-derived suffix (`-<last4>` of their address), so a second "Elian" becomes
+`elian-2a21.seikine.eth`. Reserved bases (`admin`, `seikine`, …) are always suffixed.
+The self-served form at `GET /` walks the whole loop (claim → reveal the handle).
+
+### `GET /preview?label=<raw>&address=<0x…>`
+
+Validation + preview only — **never returns "taken"** (duplication just yields a
+suffixed handle). The frontend nudges only on `valid:false`.
+
+```jsonc
+{ "valid": true,  "displayName": "Elian", "handle": "elian",      "clean": true  }
+{ "valid": true,  "displayName": "Elian", "handle": "elian-2a21", "clean": false }
+{ "valid": false, "reason": "empty" | "too_long" | "multi_label" | "unnormalizable" }
+```
+
+`address` is optional; without it the suffixed handle is omitted (the suffix needs it).
+
+### `POST /claim`  `{ "label": "Elian", "address": "0x…" }`
+
+Idempotent on address — an address keeps its frozen handle; only `displayName`
+updates. Testnet: **no signature** (whoever calls the API asserts the address;
+consequence is squatting, never fund loss — the on-chain address is the source of
+truth). `400` only when the label can't become a handle at all.
+
+```bash
+curl -X POST https://seikine-continuity-production.up.railway.app/claim \
+  -H "Content-Type: application/json" -d '{"label":"Elian","address":"0x…"}'
+# → { ok:true, displayName:"Elian", handle:"elian", name:"elian.seikine.eth", clean:true, address:"0x…" }
+```
+
+- **Store** ([`src/claims.js`](src/claims.js)): ENSIP-15 normalization (the SAME
+  `normalize` at claim time and resolve time), `by_handle` + `by_address` indexes,
+  write-through to `DATA_DIR/claims.json` (gitignored, like `names.json`).
+- **Resolution** is claims-first: a claimed `handle.seikine.eth` serves `addr(60)`
+  → the address, `text("name")` → the display name, and the existing `seikine:*`
+  position keys. The seed (`alice`) + legacy `/register` names remain a fallback.
+  The signing/digest path is **unchanged**.
+
+### Legacy `POST /register` (kept for back-compat)
+
+The earlier flat `name → address` map ([`src/names.js`](src/names.js)):
+first-come-first-served, rejects duplicates, seed-protected. Superseded by `/claim`;
+still served so existing links keep working.
 
 ```bash
 curl -X POST https://seikine-continuity-production.up.railway.app/register \
   -H "Content-Type: application/json" -d '{"name":"bob","address":"0x…"}'
 # → { ok: true, names: ["bob.seikine.eth", "lend.bob.seikine.eth", "borrow.bob.seikine.eth"] }
 ```
-
-- **Store** ([`src/names.js`](src/names.js)): seed-then-registrations, so `alice`
-  (the demo position) can't be hijacked; `lend`/`borrow`/`seikine`/`eth` are reserved;
-  first-come-first-served; checksummed addresses; write-through to `DATA_DIR/names.json`.
-- The label→address lookup is the only change; the CCIP signing/resolve path is identical.

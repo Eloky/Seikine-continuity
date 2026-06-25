@@ -4,7 +4,15 @@
 
 import express from 'express'
 import { handleRequest } from './handler.js'
-import { registerName } from './names.js'
+import { registerName, getAddressForLabel } from './names.js'
+import {
+  preview as previewClaim,
+  claim as claimName,
+  getClaimByAddress,
+  getClaimByHandle,
+  publicClaim,
+  normalizeLabel,
+} from './claims.js'
 import { CLAIM_FORM_HTML } from './form.js'
 
 // Permissive CORS. Applied to the tier-2 form/register routes AND the CCIP
@@ -23,6 +31,12 @@ const cors = (_req, res, next) => {
 
 export function createApp(deps) {
   const register = deps.register ?? registerName
+  // Claims consult legacy/seed labels as "taken" so a clean handle can never
+  // shadow an existing name (spec §1). Default to the same store the resolver
+  // falls back to; tests can inject `preview`/`claim`/`getAddressForLabel`.
+  const legacyLookup = deps.getAddressForLabel ?? getAddressForLabel
+  const preview = deps.preview ?? ((label, address) => previewClaim(label, address, { legacyLookup }))
+  const claim = deps.claim ?? ((label, address) => claimName(label, address, { legacyLookup }))
   const app = express()
   app.use(express.json({ limit: '1mb' }))
 
@@ -46,8 +60,47 @@ export function createApp(deps) {
   app.get('/:sender/:data', handle)
   app.get('/health', (_req, res) => res.json({ ok: true }))
 
-  // ── Tier-2: live registration + self-served claim form (additive) ──────────
+  // ── Tier-2: self-served claim form + in-app name claim (additive) ──────────
   app.get('/', cors, (_req, res) => res.type('html').send(CLAIM_FORM_HTML))
+
+  // In-app claim (spec §4): display/handle split, auto-suffix, idempotent on
+  // address. Preview never returns "taken" — duplication yields a suffixed
+  // handle, not an error. The only thing the frontend nudges on is `valid:false`.
+  app.get('/preview', cors, (req, res) => {
+    const { label, address } = req.query
+    res.json(preview(label, address))
+  })
+  app.options('/claim', cors, (_req, res) => res.sendStatus(204))
+  app.post('/claim', cors, (req, res) => {
+    const { label, address } = req.body || {}
+    const r = claim(label, address)
+    res.status(r.ok ? 200 : 400).json(r) // 400 only when the label can't become a handle
+  })
+
+  // In-app identity reads (Phase 2 §0a): pure reads of indexes that already
+  // exist. ENS has no address->handle reverse, so the wallet button asks the
+  // gateway "does this address already have a claim?". GET disambiguates from
+  // the POST above by method.
+  app.get('/claim', cors, (req, res) => {
+    const { address, handle } = req.query
+    if (address) {
+      const c = publicClaim(getClaimByAddress(address))
+      return res.json(c ? { claimed: true, ...c } : { claimed: false })
+    }
+    if (handle !== undefined) {
+      let rec = null
+      try {
+        rec = getClaimByHandle(normalizeLabel(handle)) // normalize so callers can pass any case
+      } catch {
+        rec = null
+      }
+      const c = publicClaim(rec)
+      return res.json(c ? { found: true, ...c } : { found: false })
+    }
+    res.status(400).json({ message: 'provide ?address= or ?handle=' })
+  })
+
+  // Legacy registration (pre-claim flat label->address map). Kept working.
   app.options('/register', cors, (_req, res) => res.sendStatus(204))
   app.post('/register', cors, (req, res) => {
     const { name, address } = req.body || {}
